@@ -1,0 +1,322 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Wireframe World Runner</title>
+    <style>
+        body {
+            margin: 0;
+            overflow: hidden;
+            background-color: #000000; /* Black background */
+            color: #ffffff; /* White text */
+            font-family: 'Courier New', Courier, monospace; /* Monospaced font for futuristic feel */
+            cursor: none; /* Hide cursor during gameplay */
+        }
+        canvas { display: block; }
+        #info {
+            position: absolute;
+            top: 15px;
+            left: 15px;
+            z-index: 100;
+            display: block;
+            font-size: 20px;
+            text-shadow: 0 0 5px #ffffff; /* Subtle glow for text */
+        }
+        #gameover {
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            z-index: 101;
+            display: none; /* Hidden by default */
+            font-size: 5vw; /* Responsive font size */
+            font-weight: bold;
+            background-color: rgba(0, 0, 0, 0.6);
+            padding: 20px 40px;
+            border: 2px solid #ffffff;
+            border-radius: 5px;
+            text-align: center;
+            text-shadow: 0 0 10px #ffffff;
+        }
+        #restartButton {
+            display: block;
+            margin: 25px auto 0;
+            padding: 10px 20px;
+            font-size: 2.5vw; /* Responsive font size */
+            font-family: 'Courier New', Courier, monospace;
+            cursor: pointer;
+            background-color: #000000;
+            color: #ffffff;
+            border: 1px solid #ffffff;
+            border-radius: 3px;
+            transition: background-color 0.3s, color 0.3s;
+        }
+        #restartButton:hover {
+            background-color: #ffffff;
+            color: #000000;
+        }
+    </style>
+</head>
+<body>
+    <div id="info">SCORE: 0</div>
+    <div id="gameover">
+        // GAME OVER //
+        <button id="restartButton">RESTART</button>
+    </div>
+    <script type="importmap">
+        {
+            "imports": {
+                "three": "https://unpkg.com/three@0.160.0/build/three.module.js"
+            }
+        }
+    </script>
+    <script type="module">
+        import * as THREE from 'three';
+
+        let scene, camera, renderer, player;
+        let obstacles = [];
+        let score = 0;
+        let gameOver = false;
+        const initialGameSpeed = 0.3; // Speed at which obstacles move towards player
+        let gameSpeed = initialGameSpeed;
+        const acceleration = 0.0001; // How much speed increases per frame/update cycle
+        const maxSpeed = 1.5;
+
+        // Player control variables
+        const laneWidth = 5; // How far left/right the player can move from center
+        const playerBaseY = 1; // Player's vertical position
+
+        // Obstacle spawn variables
+        const obstacleSpawnZ = -100; // How far away obstacles spawn
+        let timeToNextSpawn = 0;
+        const baseSpawnInterval = 1.0; // Seconds between spawns at initial speed
+
+        // DOM Elements
+        const scoreElement = document.getElementById('info');
+        const gameOverElement = document.getElementById('gameover');
+        const restartButton = document.getElementById('restartButton');
+
+        // Clock for delta time (consistent speed across different refresh rates)
+        const clock = new THREE.Clock();
+
+        function init() {
+            // Scene
+            scene = new THREE.Scene();
+            scene.background = new THREE.Color(0x000000);
+            scene.fog = new THREE.Fog(0x000000, 50, 120); // Fog adds depth
+
+            // Camera
+            camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.1, 1000);
+            camera.position.set(0, playerBaseY + 2, 10); // Positioned behind and slightly above player view
+            camera.lookAt(0, playerBaseY, 0); // Look towards where the player will be
+
+            // Renderer
+            renderer = new THREE.WebGLRenderer({ antialias: true });
+            renderer.setSize(window.innerWidth, window.innerHeight);
+            // renderer.setPixelRatio(window.devicePixelRatio); // Optional: Sharper on high DPI screens
+            document.body.appendChild(renderer.domElement);
+
+            // Player (Wireframe Cube)
+            createPlayer();
+
+            // Controls
+            window.addEventListener('mousemove', handleMouseMove);
+            restartButton.addEventListener('click', restartGame);
+
+            // Responsiveness
+            window.addEventListener('resize', onWindowResize, false);
+
+            // Start animation loop
+            animate();
+        }
+
+        function createPlayer() {
+            const playerGeometry = new THREE.BoxGeometry(1, 1, 1);
+            // Use MeshBasicMaterial for wireframe - no lighting needed
+            const playerMaterial = new THREE.MeshBasicMaterial({
+                color: 0xffffff, // Bright white
+                wireframe: true,
+                // wireframeLinewidth: 2 // Optional: thicker lines, might vary by browser/GPU
+            });
+            player = new THREE.Mesh(playerGeometry, playerMaterial);
+            player.position.set(0, playerBaseY, 0); // Player stays at Z=0
+            scene.add(player);
+        }
+
+        function handleMouseMove(event) {
+            if (gameOver) return;
+            // Normalize mouse X position (-1 to 1)
+            const mouseXNormalized = (event.clientX / window.innerWidth) * 2 - 1;
+            // Map normalized position to player's X range, add smoothing
+            const targetX = mouseXNormalized * laneWidth;
+            player.position.x += (targetX - player.position.x) * 0.1; // Lerp for smooth movement
+        }
+
+        function spawnObstacle() {
+            const obstacleType = Math.floor(Math.random() * 5); // 0: Cube, 1: Sphere, 2: Pyramid, 3: Tetrahedron, 4: Torus
+            let obstacleGeometry;
+            const size = Math.random() * 1.5 + 0.8; // Random size
+
+            switch (obstacleType) {
+                case 0: // Cube
+                    obstacleGeometry = new THREE.BoxGeometry(size, size, size);
+                    break;
+                case 1: // Sphere
+                    obstacleGeometry = new THREE.SphereGeometry(size / 1.5, 8, 6); // Lower segments for performance/style
+                    break;
+                case 2: // Pyramid (Cone with 4 sides)
+                    obstacleGeometry = new THREE.ConeGeometry(size / 1.5, size * 1.2, 4);
+                    break;
+                case 3: // Tetrahedron
+                    obstacleGeometry = new THREE.TetrahedronGeometry(size / 1.2);
+                    break;
+                case 4: // Torus
+                default:
+                     obstacleGeometry = new THREE.TorusGeometry(size / 2, size / 5, 8, 12 );
+                    break;
+            }
+
+            // Slight color variation (shades of white/grey/light blue)
+            const hue = 0.6 + Math.random() * 0.1; // Bluish range
+            const saturation = Math.random() * 0.3; // Low saturation
+            const lightness = 0.8 + Math.random() * 0.2; // Bright
+            const obstacleColor = new THREE.Color().setHSL(hue, saturation, lightness);
+
+
+            const obstacleMaterial = new THREE.MeshBasicMaterial({
+                color: obstacleColor,
+                wireframe: true
+            });
+            const obstacle = new THREE.Mesh(obstacleGeometry, obstacleMaterial);
+
+            // Position: Random X, fixed Y (or slightly random), far Z
+            obstacle.position.x = (Math.random() - 0.5) * (laneWidth * 3); // Wider spawn range than player movement
+            obstacle.position.y = playerBaseY + (Math.random() - 0.5) * 1; // Random vertical variation around player height
+            obstacle.position.z = obstacleSpawnZ;
+
+            // Random initial rotation
+            obstacle.rotation.x = Math.random() * Math.PI * 2;
+            obstacle.rotation.y = Math.random() * Math.PI * 2;
+
+            scene.add(obstacle);
+            obstacles.push(obstacle);
+        }
+
+        function update(deltaTime) {
+            if (gameOver) return;
+
+            // Increase game speed
+            gameSpeed = Math.min(maxSpeed, gameSpeed + acceleration * deltaTime * 60); // Scale acceleration by deltaTime
+
+            // Move obstacles towards the player
+            const obstaclesToRemove = [];
+            const playerBox = new THREE.Box3().setFromObject(player); // Update player bounding box once
+
+            obstacles.forEach((obstacle, index) => {
+                obstacle.position.z += gameSpeed * deltaTime * 60; // Scale movement by deltaTime
+
+                // Simple rotation animation
+                obstacle.rotation.x += 0.005 * gameSpeed * deltaTime * 60;
+                obstacle.rotation.y += 0.008 * gameSpeed * deltaTime * 60;
+
+
+                // Check for cleanup (obstacle passed the camera)
+                if (obstacle.position.z > camera.position.z + 5) {
+                    obstaclesToRemove.push(index);
+                    scene.remove(obstacle);
+                    // IMPORTANT: Dispose geometry and material to free memory
+                    if (obstacle.geometry) obstacle.geometry.dispose();
+                    if (obstacle.material) obstacle.material.dispose();
+                } else {
+                    // Check for collision
+                    const obstacleBox = new THREE.Box3().setFromObject(obstacle);
+                    if (playerBox.intersectsBox(obstacleBox)) {
+                        gameOver = true;
+                        gameOverElement.style.display = 'block';
+                        document.body.style.cursor = 'default'; // Show cursor again
+                        // Optional: Stop player movement smoothing immediately on game over
+                        // player.position.x = targetX; // (Need targetX from handleMouseMove)
+                    }
+                }
+            });
+
+            // Remove obstacles marked for removal (iterate backwards)
+            for (let i = obstaclesToRemove.length - 1; i >= 0; i--) {
+                obstacles.splice(obstaclesToRemove[i], 1);
+            }
+
+            // Spawn new obstacles based on time and speed
+            timeToNextSpawn -= deltaTime;
+            if (timeToNextSpawn <= 0) {
+                spawnObstacle();
+                // Calculate next spawn time - faster spawns at higher speeds
+                timeToNextSpawn = Math.max(0.2, baseSpawnInterval * (initialGameSpeed / gameSpeed)); // Ensure minimum interval
+            }
+
+            // Update score (based on time survived, scaled by speed)
+            score += Math.floor(gameSpeed * deltaTime * 100); // Adjust multiplier as needed
+            scoreElement.textContent = `SCORE: ${score}`;
+
+             // Smoothly move camera X to follow player slightly
+            const targetCameraX = player.position.x * 0.2; // Camera moves less than player
+            camera.position.x += (targetCameraX - camera.position.x) * 0.05; // Slower lerp for camera
+            camera.lookAt(player.position.x, player.position.y, 0); // Keep looking at player's general area
+        }
+
+        function restartGame() {
+            gameOver = false;
+            gameOverElement.style.display = 'none';
+            document.body.style.cursor = 'none';
+
+            // Reset game state
+            score = 0;
+            gameSpeed = initialGameSpeed;
+            timeToNextSpawn = 0;
+
+            // Reset player position
+            player.position.set(0, playerBaseY, 0);
+
+            // Remove all existing obstacles
+            obstacles.forEach(obstacle => {
+                scene.remove(obstacle);
+                if (obstacle.geometry) obstacle.geometry.dispose();
+                if (obstacle.material) obstacle.material.dispose();
+            });
+            obstacles = []; // Clear the array
+
+            // Reset camera position (optional, but good practice)
+            camera.position.set(0, playerBaseY + 2, 10);
+            camera.lookAt(0, playerBaseY, 0);
+
+            // Update UI
+            scoreElement.textContent = `SCORE: ${score}`;
+
+            // Reset clock delta just in case of a long pause on game over screen
+            clock.getDelta();
+        }
+
+        function animate() {
+            requestAnimationFrame(animate);
+            const deltaTime = clock.getDelta(); // Get time since last frame
+
+            // Only update game logic if not game over
+            if (!gameOver) {
+                update(deltaTime);
+            }
+
+            renderer.render(scene, camera);
+        }
+
+        function onWindowResize() {
+            camera.aspect = window.innerWidth / window.innerHeight;
+            camera.updateProjectionMatrix();
+            renderer.setSize(window.innerWidth, window.innerHeight);
+        }
+
+        // Start the game
+        init();
+
+    </script>
+</body>
+</html>
